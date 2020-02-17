@@ -14,6 +14,10 @@ public class Client : MonoBehaviour
     public int Port = 26950;
     public int MyId = 0;
     public TCP tcp;
+    public UDP udp;
+
+    private delegate void PacketHandler(Packet packet);
+    private static Dictionary<int, PacketHandler> packetHandlers;
 
     private void Awake()
     {
@@ -31,10 +35,12 @@ public class Client : MonoBehaviour
     private void Start()
     {
         tcp = new TCP();
+        udp = new UDP();
     }
 
     public void ConenctToServer()
     {
+        InitalizeClientData();
         tcp.Connect();
     }
 
@@ -43,6 +49,7 @@ public class Client : MonoBehaviour
         public TcpClient Socket;
 
         public NetworkStream Stream;
+        private Packet recievedData;
         public byte[] RecieveBuffer;
 
         public void Connect()
@@ -67,7 +74,26 @@ public class Client : MonoBehaviour
 
             Stream = Socket.GetStream();
 
+            recievedData = new Packet();
+
             Stream.BeginRead(RecieveBuffer, 0, DataBufferSize, RecieveCallback, null);
+        }
+
+        public void SendData(Packet packet)
+        {
+            try
+            {
+                if (Socket != null)
+                {
+                    Stream.BeginWrite(packet.ToArray(), 0, packet.Length(), null, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.Log($"Error sending data to server via TCP: {ex}");
+            }
+            
+
         }
 
         private void RecieveCallback(IAsyncResult result)
@@ -83,7 +109,7 @@ public class Client : MonoBehaviour
                 byte[] data = new byte[byteLength];
                 Array.Copy(RecieveBuffer, data, byteLength);
 
-                //TODO handle data
+                recievedData.Reset(HandleData(data));
                 Stream.BeginRead(RecieveBuffer, 0, DataBufferSize, RecieveCallback, null);
             }
             catch (Exception ex)
@@ -92,5 +118,143 @@ public class Client : MonoBehaviour
                 //TODO disconnect
             }
         }
+
+        private bool HandleData(byte[] data)
+        {
+            int packetLength = 0;
+            recievedData.SetBytes(data);
+
+            if(recievedData.UnreadLength() >= 4)
+            {
+                packetLength = recievedData.ReadInt();
+                if(packetLength <= 0)
+                {
+                    return true;
+                }
+            }
+
+            while (packetLength > 0 && packetLength <= recievedData.UnreadLength())
+            {
+                byte[] packetBytes = recievedData.ReadBytes(packetLength);
+                ThreadManager.ExecuteOnMainThread(() =>
+                {
+                    using (Packet packet = new Packet(packetBytes))
+                    {
+                        int packetId = packet.ReadInt();
+                        packetHandlers[packetId](packet);
+                    }
+                });
+
+                packetLength = 0;
+                if (recievedData.UnreadLength() >= 4)
+                {
+                    packetLength = recievedData.ReadInt();
+                    if (packetLength <= 0)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if(packetLength <= 1)
+            {
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    public class UDP
+    {
+        public UdpClient socket;
+        public IPEndPoint endPoint;
+
+        public UDP()
+        {
+            endPoint = new IPEndPoint(IPAddress.Parse(Instance.Ip), Instance.Port);
+        }
+
+        public void Connect(int localPort)
+        {
+            socket = new UdpClient(localPort);
+
+            socket.Connect(endPoint);
+            socket.BeginReceive(RecieveCallback, null);
+
+            using(Packet packet = new Packet())
+            {
+                SendData(packet);
+            }
+        }
+
+
+        public void SendData(Packet packet)
+        {
+            try
+            {
+                packet.InsertInt(Instance.MyId);
+                if(socket != null)
+                {
+                    socket.BeginSend(packet.ToArray(), packet.Length(), null, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.Log($"Error sending data via UDP: {ex}");
+              
+            }
+        }
+
+        private void RecieveCallback(IAsyncResult result)
+        {
+            try
+            {
+                byte[] data = socket.EndReceive(result, ref endPoint);
+                socket.BeginReceive(RecieveCallback, null);
+
+                if(data.Length < 4)
+                {
+                    //TODO disconnect
+                    return;
+                }
+
+                HandleData(data);
+            }
+            catch (Exception)
+            {
+
+                throw;
+            }
+        }
+
+        private void HandleData(byte[] data)
+        {
+            using(Packet packet = new Packet(data))
+            {
+                int packetLength = packet.ReadInt();
+                data = packet.ReadBytes(packetLength);
+            }
+            ThreadManager.ExecuteOnMainThread(() =>
+            {
+                using (Packet packet = new Packet(data))
+                {
+                    int packetId = packet.ReadInt();
+                    packetHandlers[packetId](packet);
+                }
+            });
+        }
+    }
+
+    private void InitalizeClientData()
+    {
+        packetHandlers = new Dictionary<int, PacketHandler>()
+        {
+            { (int)ServerPackets.welcome, ClientHandle.Welcome },
+            { (int)ServerPackets.udpTest, ClientHandle.UDPTest }
+
+        };
+
+        Debug.Log("Initialized packets");
     }
 }
