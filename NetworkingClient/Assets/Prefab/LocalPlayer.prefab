@@ -236,7 +236,7 @@ AudioListener:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7092967565036431470}
-  m_Enabled: 1
+  m_Enabled: 0
 --- !u!114 &9098885342461786988
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -249,3 +249,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: caab8076ff7173a43817dc2e782d3c74, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  player: {fileID: 2557497223592016122}
+  sensitivity: 100
+  clampAngle: 85
